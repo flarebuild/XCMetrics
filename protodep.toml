@@ -1,0 +1,15 @@
+proto_outdir = "./managed_proto"
+
+[[dependencies]]
+  target = "github.com/google/protobuf/src/google/protobuf"
+  branch = "master"
+  path = "google/protobuf"
+
+[[dependencies]]
+  target = "github.com/googleapis/googleapis"
+  branch = "master"
+
+[[dependencies]]
+  target = "github.com/googleapis/googleapis/google/devtools/build/v1"
+  branch = "master"
+  path = "google/devtools/build/v1"

@@ -1,0 +1,22 @@
+proto_outdir = "./managed_proto"
+
+[[dependencies]]
+  target = "github.com/google/protobuf/src/google/protobuf"
+  revision = "a6c28fb20754604be208150984cfef8036b14285"
+  branch = "master"
+  path = "google/protobuf"
+  protocol = ""
+
+[[dependencies]]
+  target = "github.com/googleapis/googleapis"
+  revision = "c06bbe28cc7287a55bf7926ee48da2565854de7f"
+  branch = "master"
+  path = ""
+  protocol = ""
+
+[[dependencies]]
+  target = "github.com/googleapis/googleapis/google/devtools/build/v1"
+  revision = "c06bbe28cc7287a55bf7926ee48da2565854de7f"
+  branch = "master"
+  path = "google/devtools/build/v1"
+  protocol = ""
