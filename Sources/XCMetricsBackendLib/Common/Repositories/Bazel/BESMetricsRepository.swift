@@ -17,36 +17,34 @@ typealias StreamReq = Google_Devtools_Build_V1_PublishBuildToolEventStreamReques
 
 struct BESMetricsRepository : MetricsRepository {
     let logger: Logger
-    let besConfig: BESConfig
+    let besConfig: BESConfiguration
     let dispatchGroup = DispatchGroup()
     let dispatchQueue = DispatchQueue(
             label: "com.spotify.xcmetrics.bes",
             qos: .default,
             attributes: [.concurrent])
 
-    init(logger: Logger, besConfig: BESConfig) {
+    init(logger: Logger, besConfig: BESConfiguration) {
         self.logger = logger
         self.besConfig = besConfig
     }
 
     private func initClient(group: EventLoopGroup) -> BESClient? {
+        let target: URLComponents
+        if besConfig.target == nil {
+            return .none
+        } else {
+            target = besConfig.target!
+        }
         do {
-            let secure: Bool = besConfig.target.scheme != nil
-                    && besConfig.target.scheme.unsafelyUnwrapped.contains("grpcs")
+            let secure: Bool = target.scheme != nil && target.scheme!.contains("grpcs")
             let ccc = ClientConnection.Configuration(
-                    target: .hostAndPort(besConfig.target.host!, besConfig.target.port!.intValue),
+                    target: .hostAndPort(target.host!, target.port!),
                     eventLoopGroup: group,
                     tls:  secure ? ClientConnection.Configuration.TLS() : nil)
-
             let cc = ClientConnection(configuration: ccc)
-            let co = CallOptions(
-                    customMetadata: HPACKHeaders([
-                        ("Authorization", besConfig.authToken),
-                        // todo: set some other Bazel bits here;
-                        // iirc, Bazel sets the reapi.RequestMetadata binary header maybe?
-                    ]),
-                    timeout: try .seconds(30))
-
+            let hdrs = besConfig.authToken != nil ? [("Authorization", besConfig.authToken!)] : []
+            let co = CallOptions(customMetadata: HPACKHeaders(hdrs), timeout: try .seconds(30))
             return .some(BESClient(connection: cc, defaultCallOptions: co))
         } catch {
             logger.error("Error creating server connection: \(error)")
@@ -67,7 +65,6 @@ struct BESMetricsRepository : MetricsRepository {
                 logger.error("Error closing event group: \(error.localizedDescription)")
             }
         }
-
         var expectedAckSequenceNumber: Int64 = -1
         let stream: StreamCall? = client?.publishBuildToolEventStream(handler: { ack in
             assert(expectedAckSequenceNumber == ack.sequenceNumber)
@@ -90,7 +87,6 @@ struct BESMetricsRepository : MetricsRepository {
                 buildId: build.build.id ?? "",
                 invocationId: invocationId,
                 logger: logger)
-
         return [
             // started event
             // todo: im actually not sure if the very first event should embed the bazel started event or not,
@@ -225,5 +221,9 @@ private class BuildEventRequestFactory {
     }
 }
 
-// proto initialization DSL
+/**
+ proto initialization DSL
+ - Parameter f: initializer function
+ - Returns: the proto message with your changes applied
+ */
 func make<T: Message> (f: (inout T) -> Void) -> T { var t = T.init(); f(&t); return t }

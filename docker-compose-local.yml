@@ -31,7 +31,8 @@ services:
       retries: 3
 
   xcmetrics:
-    image: spotify/xcmetrics:latest
+#    image: spotify/xcmetrics:latest
+    build: .
     depends_on:
       redis:
         condition: service_healthy
@@ -40,6 +41,10 @@ services:
     ports:
       - "8080:8080"
     environment:
+      - XCMETRICS_BES_TARGET=grpc://localhost:8005
+      - XCMETRICS_BES_AUTH_TOKEN=local_flare
+      - XCMETRICS_BES_PROJECT_ID=xcmetrics_flare
+      - XCMETRICS_BES_KEYWORDS=flare,build,bazel,xcode
       - XCMETRICS_START_JOBS_SAME_INSTANCE=1
       - XCMETRICS_USE_ASYNC_LOG_PROCESSING=1
       - XCMETRICS_REDACT_USER_DATA=1
