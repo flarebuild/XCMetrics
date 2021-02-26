@@ -43,7 +43,7 @@ struct BESMetricsRepository : MetricsRepository {
                     eventLoopGroup: group,
                     tls:  secure ? ClientConnection.Configuration.TLS() : nil)
             let cc = ClientConnection(configuration: ccc)
-            let hdrs = besConfig.authToken != nil ? [("Authorization", besConfig.authToken!)] : []
+            let hdrs = besConfig.authToken != nil ? [("X-API-Key", besConfig.authToken!)] : []
             let co = CallOptions(customMetadata: HPACKHeaders(hdrs), timeout: try .seconds(30))
             return .some(BESClient(connection: cc, defaultCallOptions: co))
         } catch {

@@ -47,9 +47,11 @@ func routes(_ app: Application) throws {
 
     // Repository Selection
     let metricsRepository: MetricsRepository
-    if config.besTarget != nil {
+    if config.besTarget == nil {
+        app.logger.info("Running in standard mode.")
         metricsRepository = PostgreSQLMetricsRepository(db: app.db, logger: app.logger)
     } else {
+        app.logger.info("Running in BES Proxy mode.")
         let besConfig = BESConfiguration(from: config)
         metricsRepository = BESMetricsRepository(logger: app.logger, besConfig: besConfig)
     }
