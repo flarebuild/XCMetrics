@@ -2,21 +2,43 @@ proto_outdir = "./managed_proto"
 
 [[dependencies]]
   target = "github.com/google/protobuf/src/google/protobuf"
-  revision = "a6c28fb20754604be208150984cfef8036b14285"
+  revision = "8080bebf1f2ff87ef96a24135afe7f82d2eb3d2a"
   branch = "master"
   path = "google/protobuf"
   protocol = ""
 
 [[dependencies]]
   target = "github.com/googleapis/googleapis"
-  revision = "c06bbe28cc7287a55bf7926ee48da2565854de7f"
+  revision = "ee4bac5de3e4bfc4bbca87a6b256f1a58dcfadd0"
   branch = "master"
   path = ""
   protocol = ""
 
 [[dependencies]]
   target = "github.com/googleapis/googleapis/google/devtools/build/v1"
-  revision = "c06bbe28cc7287a55bf7926ee48da2565854de7f"
+  revision = "ee4bac5de3e4bfc4bbca87a6b256f1a58dcfadd0"
   branch = "master"
   path = "google/devtools/build/v1"
+  protocol = ""
+
+[[dependencies]]
+  target = "github.com/bazelbuild/bazel/src/main/java/com/google/devtools/build/lib/buildeventstream/proto"
+  revision = "8f7bc2f67fafcaa8d25cfc77eaaedbf8eed2984a"
+  branch = "master"
+  path = "build_event_stream"
+  protocol = ""
+
+[[dependencies]]
+  target = "github.com/bazelbuild/bazel/src/main/protobuf"
+  revision = "8f7bc2f67fafcaa8d25cfc77eaaedbf8eed2984a"
+  branch = "master"
+  path = "src/main/protobuf"
+  ignores = ["analysis_v2.proto", "remote_execution_log.proto"]
+  protocol = ""
+
+[[dependencies]]
+  target = "github.com/bazelbuild/remote-apis/build/bazel"
+  revision = "9e72daff42c941baaf43a4c370e2607a984c58a7"
+  branch = "master"
+  path = "build/bazel"
   protocol = ""
