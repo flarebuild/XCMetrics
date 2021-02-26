@@ -95,38 +95,38 @@ struct BESMetricsRepository : MetricsRepository {
             // started event
             // todo: im actually not sure if the very first event should embed the bazel started event or not,
             // need to test against our server impl and see what happens; it shouldnt matter one way or the other iirc?
-            factory.bazelEventRequest { ev, req in
+            factory.makeBazelEventRequest { ev, req in
                 req.projectID = besConfig.projectId
                 req.notificationKeywords = besConfig.keywords
                 // populate the started event; set `id` and `payload`
-                var id = BuildEventStream_BuildEventId()
-                id.started = BuildEventStream_BuildEventId.BuildStartedId()
-                ev.id = id
-                var started = BuildEventStream_BuildStarted()
-                started.uuid = invocationId
-                started.startTimeMillis = Int64(build.build.startTimestampMicroseconds * 1000)
-                // todo: more data for started. example:
-                // started {
-                //  uuid: "d5f5ab9c-39f0-4770-88db-ac6425815fef"
-                //  start_time_millis: 1614305210847
-                //  build_tool_version: "4.0.0"
-                //  options_description: "--color=yes --show_timestamps --disk_cache=/tmp/bazel_disk_cache ..."
-                //  command: "build"
-                //  working_directory: "/Users/u/code/repos/r"
-                //  workspace_directory: "/Users/u/code/repos/r"
-                //  server_pid: 43829
-                //}
-                ev.payload = .started(started)
+                ev.id = make {
+                    $0.started = make { startedId in }
+                }
+                ev.payload = .started(make {
+                    $0.uuid = invocationId
+                    $0.startTimeMillis = Int64(build.build.startTimestampMicroseconds * 1000)
+                    // todo: more data for started. example:
+                    // started {
+                    //  uuid: "d5f5ab9c-39f0-4770-88db-ac6425815fef"
+                    //  start_time_millis: 1614305210847
+                    //  build_tool_version: "4.0.0"
+                    //  options_description: "--color=yes --show_timestamps --disk_cache=/tmp/bazel_disk_cache ..."
+                    //  command: "build"
+                    //  working_directory: "/Users/u/code/repos/r"
+                    //  workspace_directory: "/Users/u/code/repos/r"
+                    //  server_pid: 43829
+                    //}
+                })
 
                 // populate children Ids of the started event
                 // bazel lists all the possible children here, some populated but most not.
                 // don't think we need most of them, but this is where the "pattern" is set.
-                // todo: something more useful for the pattern
-                var syntheticPattern = "<xcodebuild>"
-                var patternId = BuildEventStream_BuildEventId()
-                patternId.pattern = BuildEventStream_BuildEventId.PatternExpandedId()
-                patternId.pattern.pattern = [syntheticPattern]
-                ev.children = [patternId]
+                ev.children = [make {
+                    $0.pattern = make {
+                        // todo: something more useful for the pattern
+                        $0.pattern = ["<xcodebuild>"]
+                    }
+                }]
             },
 
             // todo:
@@ -143,27 +143,28 @@ struct BESMetricsRepository : MetricsRepository {
             // factory.bazelEventRequest { ev, req in },
 
             // build stream finished event (end of bazel stream)
-            factory.bazelEventRequest { ev, req in
-                var id = BuildEventStream_BuildEventId()
-                id.buildFinished = BuildEventStream_BuildEventId.BuildFinishedId()
-                var finished = BuildEventStream_BuildFinished()
-                var code = BuildEventStream_BuildFinished.ExitCode()
-                if build.errors == nil || build.errors!.isEmpty {
-                    finished.overallSuccess = true
-                    code.name = "SUCCESS"
-                    code.code = 0
-                } else {
-                    finished.overallSuccess = false
-                    code.name = "FAILED"
-                    code.code = 1
+            factory.makeBazelEventRequest { ev, req in
+                ev.id = make {
+                    $0.buildFinished = BuildEventStream_BuildEventId.BuildFinishedId()
                 }
-                finished.finishTimeMillis = Int64(build.build.endTimestampMicroseconds * 1000)
-                finished.exitCode = code
-                ev.payload = .finished(finished)
+                ev.payload = .finished(make { fin in
+                    fin.finishTimeMillis = Int64(build.build.endTimestampMicroseconds * 1000)
+                    fin.exitCode = make {
+                        if build.errors == nil || build.errors!.isEmpty {
+                            fin.overallSuccess = true
+                            $0.name = "SUCCESS"
+                            $0.code = 0
+                        } else {
+                            fin.overallSuccess = false
+                            $0.name = "FAILED"
+                            $0.code = 1
+                        }
+                    }
+                })
             },
             // component stream finished event
-            factory.newEventRequest { ev in
-                ev.orderedBuildEvent.event.componentStreamFinished = finishedEvent { finished in }
+            factory.makeEventRequest { ev in
+                ev.orderedBuildEvent.event.componentStreamFinished = make { finished in }
             }
         ]
     }
@@ -186,11 +187,11 @@ private class BuildEventRequestFactory {
      - Parameter f: the request instantiation closure
      - Returns: a stream request
      */
-    func newEventRequest(f:(inout StreamReq) -> Void) -> StreamReq {
+    func makeEventRequest(f:(inout StreamReq) -> Void) -> StreamReq {
         currentSequenceNumber += 1
-        var r = streamRequest { req in
-            req.orderedBuildEvent = orderedBuildEvent {
-                $0.streamID = streamId {
+        var r: StreamReq = make { req in
+            req.orderedBuildEvent = make {
+                $0.streamID = make {
                     // todo: closer look at the buildId here based on what Bazel is doing
                     $0.buildID = buildId
                     $0.invocationID = UUID().uuidString
@@ -207,10 +208,10 @@ private class BuildEventRequestFactory {
      - Parameter f:
      - Returns:
      */
-    func bazelEventRequest(f:(inout BuildEventStream_BuildEvent, inout StreamReq) -> Void) -> StreamReq {
+    func makeBazelEventRequest(f:(inout BuildEventStream_BuildEvent, inout StreamReq) -> Void) -> StreamReq {
         var bazelEvent = BuildEventStream_BuildEvent()
-        var request: StreamReq = newEventRequest { req in
-            req.orderedBuildEvent.event = buildEvent {
+        var request: StreamReq = make { req in
+            req.orderedBuildEvent.event = make {
                 do {
                     $0.bazelEvent = try SwiftProtobuf.Google_Protobuf_Any(message: bazelEvent)
                 }
@@ -224,32 +225,5 @@ private class BuildEventRequestFactory {
     }
 }
 
-func buildEvent(f:(inout Google_Devtools_Build_V1_BuildEvent) -> Void) -> Google_Devtools_Build_V1_BuildEvent {
-    var t = Google_Devtools_Build_V1_BuildEvent()
-    f(&t)
-    return t
-}
-
-func finishedEvent(f:(inout Google_Devtools_Build_V1_BuildEvent.BuildComponentStreamFinished) -> Void) -> Google_Devtools_Build_V1_BuildEvent.BuildComponentStreamFinished {
-    var t = Google_Devtools_Build_V1_BuildEvent.BuildComponentStreamFinished()
-    f(&t)
-    return t
-}
-
-func orderedBuildEvent(f:(inout Google_Devtools_Build_V1_OrderedBuildEvent) -> Void) -> Google_Devtools_Build_V1_OrderedBuildEvent {
-    var t = Google_Devtools_Build_V1_OrderedBuildEvent()
-    f(&t)
-    return t
-}
-
-func streamId(f:(inout Google_Devtools_Build_V1_StreamId) -> Void) -> Google_Devtools_Build_V1_StreamId {
-    var t = Google_Devtools_Build_V1_StreamId()
-    f(&t)
-    return t
-}
-
-func streamRequest(f:(inout StreamReq) -> Void) -> StreamReq {
-    var t = StreamReq()
-    f(&t)
-    return t
-}
+// proto initialization DSL
+func make<T: Message> (f: (inout T) -> Void) -> T { var t = T.init(); f(&t); return t }
