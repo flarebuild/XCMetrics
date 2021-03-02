@@ -15,3 +15,5 @@ docs_temp/
 /managed_proto
 
 /.idea
+
+.env

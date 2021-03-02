@@ -18,17 +18,18 @@ typealias StreamReq = Google_Devtools_Build_V1_PublishBuildToolEventStreamReques
 struct BESMetricsRepository : MetricsRepository {
     let logger: Logger
     let besConfig: BESConfiguration
-    let dispatchGroup = DispatchGroup()
-    let dispatchQueue = DispatchQueue(
-            label: "com.spotify.xcmetrics.bes",
-            qos: .default,
-            attributes: [.concurrent])
+    let group = MultiThreadedEventLoopGroup(numberOfThreads: 4)
 
     init(logger: Logger, besConfig: BESConfiguration) {
         self.logger = logger
         self.besConfig = besConfig
     }
 
+    /**
+     Initializes a gRPC BES client
+     - Parameter group:
+     - Returns: the configured BESClient (Google_Devtools_Build_V1_PublishBuildEventServiceClient)
+     */
     private func initClient(group: EventLoopGroup) -> BESClient? {
         let target: URLComponents
         if besConfig.target == nil {
@@ -43,8 +44,8 @@ struct BESMetricsRepository : MetricsRepository {
                     eventLoopGroup: group,
                     tls:  secure ? ClientConnection.Configuration.TLS() : nil)
             let cc = ClientConnection(configuration: ccc)
-            let hdrs = besConfig.authToken != nil ? [("X-API-Key", besConfig.authToken!)] : []
-            let co = CallOptions(customMetadata: HPACKHeaders(hdrs), timeout: try .seconds(30))
+            let hdrs = besConfig.authToken != nil ? [("x-api-key", besConfig.authToken!)] : []
+            let co = CallOptions(customMetadata: HPACKHeaders(hdrs), timeout: try .seconds(5))
             return .some(BESClient(connection: cc, defaultCallOptions: co))
         } catch {
             logger.error("Error creating server connection: \(error)")
@@ -53,44 +54,34 @@ struct BESMetricsRepository : MetricsRepository {
     }
 
     func insertBuildMetrics(_ buildMetrics: BuildMetrics, using eventLoop: EventLoop) -> EventLoopFuture<Void> {
-        // todo: is there a better event loop to use here?
-        // do we ever want more threads? these events need to send in sequence, so not sure if there's any point.
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        let client = initClient(group: group)
-        defer {
-            do {
-                try group.syncShutdownGracefully()
-                _ = client?.connection.close()
-            } catch {
-                logger.error("Error closing event group: \(error.localizedDescription)")
-            }
+        if let rawClient = initClient(group: group) {
+            let requests = createRequestsFor(build: buildMetrics)
+            let wrappedClient = WrappedClient(client: rawClient, eventLoop: eventLoop, requests: requests, logger: logger)
+            let stream = wrappedClient.publishEventStream()
+            return stream.sendMessages(requests)
+                .flatMap { _ in stream.sendEnd() }
+                .flatMap { _ in wrappedClient.done }
+                .flatMap { _ in rawClient.connection.close() }
+                .flatMapError { e in
+                    logger.error("error: \(e.localizedDescription)")
+                    return eventLoop.makeFailedFuture(e)
+                }
+        } else {
+            logger.error("no grpc connection!")
+            return eventLoop.makeFailedFuture(NSError(domain: "no_grpc_conn", code: 1))
         }
-        var expectedAckSequenceNumber: Int64 = -1
-        let stream: StreamCall? = client?.publishBuildToolEventStream(handler: { ack in
-            assert(expectedAckSequenceNumber == ack.sequenceNumber)
-        })
-        do {
-            for req in createRequestsFor(build: buildMetrics) {
-                expectedAckSequenceNumber = req.orderedBuildEvent.sequenceNumber
-                try stream?.sendMessage(req).wait()
-            }
-        } catch {
-            logger.error("failed to send BES event: \(error)")
-        }
-        // todo: don't force unwrap here
-        return stream!.sendEnd()
     }
 
-    private func createRequestsFor(build: BuildMetrics) -> Set<StreamReq> {
-        let invocationId = UUID().uuidString
+    private func createRequestsFor(build: BuildMetrics) -> Array<StreamReq> {
+        // use a simple UUID for the buildID field, but align `invocationId` with
+        // the visibile `build.id` from xcmetrics for correlation
+        let invocationId = build.build.id?.components(separatedBy: "_")[1] ?? UUID().uuidString
         let factory = BuildEventRequestFactory(
-                buildId: build.build.id ?? "",
+                buildId: UUID().uuidString,
                 invocationId: invocationId,
                 logger: logger)
         return [
             // started event
-            // todo: im actually not sure if the very first event should embed the bazel started event or not,
-            // need to test against our server impl and see what happens; it shouldnt matter one way or the other iirc?
             factory.makeBazelEventRequest { ev, req in
                 req.projectID = besConfig.projectId
                 req.notificationKeywords = besConfig.keywords
@@ -188,9 +179,8 @@ private class BuildEventRequestFactory {
         var r: StreamReq = make { req in
             req.orderedBuildEvent = make {
                 $0.streamID = make {
-                    // todo: closer look at the buildId here based on what Bazel is doing
                     $0.buildID = buildId
-                    $0.invocationID = UUID().uuidString
+                    $0.invocationID = invocationId
                 }
                 $0.sequenceNumber = currentSequenceNumber
             }
@@ -206,7 +196,7 @@ private class BuildEventRequestFactory {
      */
     func makeBazelEventRequest(f:(inout BuildEventStream_BuildEvent, inout StreamReq) -> Void) -> StreamReq {
         var bazelEvent = BuildEventStream_BuildEvent()
-        var request: StreamReq = make { req in
+        var request: StreamReq = makeEventRequest { req in
             req.orderedBuildEvent.event = make {
                 do {
                     $0.bazelEvent = try SwiftProtobuf.Google_Protobuf_Any(message: bazelEvent)
@@ -227,3 +217,67 @@ private class BuildEventRequestFactory {
  - Returns: the proto message with your changes applied
  */
 func make<T: Message> (f: (inout T) -> Void) -> T { var t = T.init(); f(&t); return t }
+
+/**
+ * Wrapper around the gRPC client which coordinates waiting for server acks while leaving most of the rest of the
+ * gRPC client interface intact
+ */
+private class WrappedClient {
+    private let _done: EventLoopPromise<Void>
+    private var queue: BuildEventResponseQueue
+    private let client: BESClient
+    private let logger: Logger
+
+    var done: EventLoopFuture<Void> {
+        get { _done.futureResult }
+    }
+
+    init(client: BESClient, eventLoop: EventLoop, requests: Array<StreamReq>, logger: Logger) {
+        self.client = client
+        self.logger = logger
+
+        // initialize internal queue which drives the `done` future used to signal that all acks have been received
+        _done = eventLoop.makePromise()
+        queue = BuildEventResponseQueue.init()
+        queue.onEmpty = { [weak self] () -> Void in
+            self?._done.completeWith(eventLoop.future())
+        }
+        requests.forEach { queue.enqueue(el: $0.orderedBuildEvent.sequenceNumber) }
+    }
+
+    /**
+     A wrapper over the gRPC client's publishBuildToolEventStream method which dequeues expected acks
+      from the internal queue
+     - Returns: A BidirectionalStreamingCall
+     */
+    func publishEventStream() -> StreamCall {
+        client.publishBuildToolEventStream(handler: { ack in
+            if let expected = self.queue.dequeue() {
+                self.logger.debug("BES Server ack: \(ack)")
+                assert(expected == ack.sequenceNumber)
+            } else {
+                self.logger.warning("warn: bad ack")
+            }
+        })
+    }
+
+    /**
+     * A simple queue of expected sequence numbers which invokes the supplied isEmpty closure when drained
+     */
+    private struct BuildEventResponseQueue {
+        var onEmpty: (() -> Void)? = nil
+        var items: [Int64] = []
+        mutating func enqueue(el: Int64) {
+            items.append(el)
+        }
+        mutating func dequeue() -> Int64? {
+            if items.isEmpty {
+                return nil
+            }
+            let tmp = items.first
+            items.remove(at: 0)
+            if items.isEmpty { onEmpty?() }
+            return tmp
+        }
+    }
+}
