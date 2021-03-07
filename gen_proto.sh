@@ -29,8 +29,17 @@ mkdir Sources/PublishBuildEventProto
     --grpc-swift_opt=Visibility=Public \
     --grpc-swift_out=Sources/PublishBuildEventProto/
 
-# later: add the currently unused reapis to protoc above;
-# we may need these if we want to use RequestMetadata binary header
-# (iirc, this might get set on the BES requests, but can't recall)
-#managed_proto/build/bazel/remote/execution/v2/*.proto \
-#managed_proto/build/bazel/semver/*.proto \
+# to make use of the reapi RMD header:
+#./tools/bin/protoc \
+#    managed_proto/google/devtools/build/v1/*.proto \
+#    managed_proto/google/longrunning/*.proto \
+#    managed_proto/google/rpc/*.proto \
+#    managed_proto/build_event_stream/*.proto \
+#    managed_proto/src/main/protobuf/*.proto \
+#    managed_proto/build/bazel/remote/execution/v2/*.proto \
+#    managed_proto/build/bazel/semver/*.proto \
+#    -I=managed_proto/ \
+#    --swift_out=Sources/PublishBuildEventProto/ \
+#    --swift_opt=Visibility=Public \
+#    --grpc-swift_opt=Visibility=Public \
+#    --grpc-swift_out=Sources/PublishBuildEventProto/
